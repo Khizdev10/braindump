@@ -10,7 +10,7 @@ import {
   authenticateWebAuthn,
   registerWebAuthnCredential,
 } from '../crypto/security';
-import { db, type UserSecurityRecord } from '../db';
+import { type UserSecurityRecord } from '../db';
 
 interface AuthContextType {
   isConfigured: boolean;
@@ -38,26 +38,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const securityRecordRef = useRef<UserSecurityRecord | null>(null);
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Check if Vault is already set up on initial load
-  const checkVaultConfig = useCallback(async () => {
-    try {
-      const record = await db.userSecurity.get('master');
-      if (record) {
-        setIsConfigured(true);
-        securityRecordRef.current = record;
-        setAutoLockMinutes(record.autoLockMinutes || 5);
-        setWebAuthnEnabled(!!record.webAuthnCredentialId);
-      } else {
+  // Check if Vault is already set up on initial load — runs once on mount
+  const hasCheckedRef = useRef(false);
+  useEffect(() => {
+    if (hasCheckedRef.current) return;
+    hasCheckedRef.current = true;
+
+    (async () => {
+      try {
+        const { db } = await import('../db');
+        if (!db.userSecurity) return;
+        const record = await db.userSecurity.get('master');
+        if (record) {
+          setIsConfigured(true);
+          securityRecordRef.current = record;
+          setAutoLockMinutes(record.autoLockMinutes || 5);
+          setWebAuthnEnabled(!!record.webAuthnCredentialId);
+        } else {
+          setIsConfigured(false);
+        }
+      } catch (err) {
+        console.error('Error checking vault config:', err);
         setIsConfigured(false);
       }
-    } catch (err) {
-      console.error('Error checking vault config:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    checkVaultConfig();
-  }, [checkVaultConfig]);
+    })();
+  }, []); // empty deps — runs exactly once
 
   // Lock function
   const lockVault = useCallback(() => {
@@ -81,13 +86,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [isUnlocked, autoLockMinutes, lockVault]);
 
-  // Listen to user activity (mouse movement, keypresses, touches)
+  // Listen to user activity (mouse movement, keypresses, touches) with throttling
+  const lastActivityRef = useRef<number>(0);
   useEffect(() => {
     if (!isUnlocked) return;
 
-    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
-    const handleActivity = () => resetInactivityTimer();
+    const handleActivity = () => {
+      const now = Date.now();
+      if (now - lastActivityRef.current > 5000) {
+        lastActivityRef.current = now;
+        resetInactivityTimer();
+      }
+    };
 
+    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
     activityEvents.forEach((event) => window.addEventListener(event, handleActivity));
     resetInactivityTimer();
 
@@ -100,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // First time Vault Setup
   const setupVault = async (passcode: string, enableBiometrics = false): Promise<boolean> => {
     try {
+      const { db } = await import('../db');
       const salt = generateSalt(16);
       const saltBase64 = bufferToBase64(salt.buffer);
       const verificationHash = await deriveVerificationHash(passcode, salt);
@@ -137,6 +150,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Unlock Vault with Passcode
   const unlockVault = async (passcode: string): Promise<boolean> => {
     try {
+      const { db } = await import('../db');
       let record = securityRecordRef.current;
       if (!record) {
         record = (await db.userSecurity.get('master')) || null;
@@ -162,6 +176,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Unlock Vault with WebAuthn Biometrics
   const unlockWithBiometrics = async (): Promise<boolean> => {
     try {
+      const { db } = await import('../db');
       let record = securityRecordRef.current;
       if (!record) {
         record = (await db.userSecurity.get('master')) || null;
@@ -170,8 +185,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const success = await authenticateWebAuthn(record.webAuthnCredentialId);
       if (success) {
-        // Retrieve temporary key stored or fallback unlock
-        // Note: For full zero-knowledge key derivation via biometrics, key can be stored in WebAuthn PRF extension or cached in sessionStorage
         const cachedKey = (window as unknown as { _tempSessionKey?: CryptoKey })._tempSessionKey;
         if (cachedKey) {
           setMasterKey(cachedKey);
@@ -188,6 +201,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const updateAutoLockTimer = async (minutes: number) => {
     setAutoLockMinutes(minutes);
+    const { db } = await import('../db');
     const record = await db.userSecurity.get('master');
     if (record) {
       await db.userSecurity.update('master', { autoLockMinutes: minutes });
@@ -195,6 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetVault = async () => {
+    const { db } = await import('../db');
     await db.userSecurity.clear();
     await db.notes.clear();
     await db.tags.clear();

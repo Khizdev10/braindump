@@ -19,8 +19,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   // Reconcile and process mutations queue
   const processSyncQueue = useCallback(async () => {
-    if (!navigator.onLine) {
-      setSyncStatus('offline');
+    if (typeof window === 'undefined' || !navigator.onLine || !db.syncQueue) {
+      setSyncStatus(typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'synced');
       return;
     }
 

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Brain Dump",
-  description: "Dump your thoughts, ideas, and more.",
+  title: "MindSpill – Offline Brain Dump",
+  description: "Offline-first, zero-knowledge encrypted, distraction-free brain dump canvas.",
 };
 
 export default function RootLayout({
@@ -25,9 +25,12 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body suppressHydrationWarning className="min-h-full flex flex-col">
+        {children}
+      </body>
     </html>
   );
 }
